@@ -117,15 +117,29 @@ async function detectRole() {
       await S.db.doc(P.roles).set({ admins: [S.email], dominios: CONFIG.dominiosIniciales || [], lectores: [] });
       S.roles = { admins: [S.email], dominios: CONFIG.dominiosIniciales || [], lectores: [] }; S.role = 'admin'; return;
     }
-  } catch (e) { /* no es administradora */ }
+  } catch (e) {
+    S.diag = 'roles: ' + (e.code || e.message);
+    // Error de red o de conexión (no de permisos): reintenta antes de decidir el rol
+    if (e.code !== 'permission-denied' && !detectRole.retried) { detectRole.retried = true; await new Promise((r) => setTimeout(r, 1500)); return detectRole(); }
+  }
   try { const a = await S.db.doc(P.regs + '/' + S.email).get(); if (a.exists && a.data().activo) { S.role = 'regional'; S.myAuth = a.data(); S.tab = 'reg'; return; } } catch (e) {}
   try { await S.db.collection(P.cal).limit(1).get({ source: 'server' }); S.role = 'gerente'; }
-  catch (e) { S.role = 'sinacceso'; }
+  catch (e) {
+    if (e.code === 'permission-denied') S.role = 'sinacceso';
+    else { S.role = 'error'; S.err = 'No se pudo conectar con el servidor (' + (e.code || e.message) + '). Revisa tu conexión y vuelve a intentar.'; }
+    S.diag = (S.diag ? S.diag + ' · ' : '') + 'calendario: ' + (e.code || e.message);
+  }
   if (location.hash === '#regional' && S.role === 'gerente') S.roleNote = 'Esta cuenta no está habilitada como Regional. Pide a la coordinación de capacitación que registre tu correo y tus regiones.';
 }
 
-function onSubErr(e) { if (e && e.code === 'permission-denied') { S.role = 'sinacceso'; render(); } }
-function sub(ref, fn) { S.unsubs.push(ref.onSnapshot(fn, onSubErr)); }
+function onSubErr(e, label) {
+  console.warn('Firestore', label, e);
+  if (!e || e.code !== 'permission-denied') return;
+  // Una lectura rechazada no quita el rol de administradora: se informa y se sigue
+  if (S.role === 'admin') { toast(`El servidor rechazó la lectura de “${label}”: ${e.message}`, 'bad'); return; }
+  S.diag = label + ': ' + e.code; S.role = 'sinacceso'; render();
+}
+function sub(ref, fn) { const label = ref.path || (ref._query && ref._query.path && ref._query.path.toString()) || 'datos'; S.unsubs.push(ref.onSnapshot(fn, (e) => onSubErr(e, label))); }
 
 function subscribe() {
   if (S.role === 'sinacceso') return;
@@ -205,8 +219,8 @@ function doRender() {
   renderTop();
   const main = $('#main');
   if (S.role === 'loading') { main.innerHTML = '<div class="loading"><div class="spin"></div>Cargando el calendario…</div>'; return; }
-  if (S.role === 'error') { main.innerHTML = `<div class="alert bad">${esc(S.err)}</div>`; return; }
-  if (S.role === 'sinacceso') { main.innerHTML = `<section class="panel"><h2 style="color:var(--accent)">Sin acceso</h2><p>La cuenta <b>${esc(S.email)}</b> no tiene acceso al calendario. Pide a la coordinación de capacitación que te habilite.</p><button class="btn" data-act="logout">Ingresar con otra cuenta</button></section>`; return; }
+  if (S.role === 'error') { main.innerHTML = `<div class="alert bad">${esc(S.err)}</div><div class="row" style="margin-top:10px"><button class="btn primary" data-act="retry">Reintentar</button><button class="btn" data-act="logout">Salir</button></div>`; return; }
+  if (S.role === 'sinacceso') { main.innerHTML = `<section class="panel"><h2 style="color:var(--accent)">Sin acceso</h2><p>La cuenta <b>${esc(S.email)}</b> no tiene acceso al calendario. Pide a la coordinación de capacitación que te habilite.</p>${S.diag ? `<p class="muted" style="font-size:12px">Detalle técnico: ${esc(S.diag)}</p>` : ''}<div class="row"><button class="btn primary" data-act="retry">Reintentar</button><button class="btn" data-act="logout">Ingresar con otra cuenta</button></div></section>`; return; }
   let html = '';
   if (S.roleNote) html += `<div class="alert warn">${esc(S.roleNote)}</div>`;
   if (S.preview) html += `<div class="alert info">Estás viendo la aplicación como la vería un Gerente. <button class="btn sm" data-act="preview-off">Volver a la vista de administradora</button></div>`;
@@ -998,6 +1012,7 @@ document.addEventListener('click', async (e) => {
     case 'add-lec': { const v = $('#lc-nuevo').value.trim().toLowerCase(); if (!EMAIL_RE.test(v)) return toast('Escribe un correo válido.', 'bad'); if (await saveRoles({ lectores: [...new Set([...S.roles.lectores, v])] }, 'Lector agregado', v)) toast('Lector agregado.', 'ok'); break; }
     case 'reg-add': regAdd(t); break;
     case 'logout': S.auth.signOut(); break;
+    case 'retry': location.reload(); break;
     case 'google': S.auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch((er) => renderLogin('No se pudo ingresar con Google: ' + er.message, 'bad')); break;
     case 'do-import': doImport(t); break;
     case 'cancel-import': S.imp = null; render(); break;
