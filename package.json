@@ -1,0 +1,20 @@
+{
+  "name": "planet-calendario-capacitacion",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Planet · Calendario de capacitación — calendario central, roles, propuestas de Regionales y dashboard para Dirección.",
+  "scripts": {
+    "test": "node --test tests/lib.test.mjs",
+    "test:rules": "firebase emulators:exec --only firestore --project planet-cal-test \"node --test tests/rules.test.mjs\"",
+    "serve": "npx --yes http-server -p 5173 -c-1 .",
+    "cierre": "node scripts/cierre-mensual.mjs"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "firebase": "^10.14.1",
+    "firebase-tools": "^13.35.1"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}

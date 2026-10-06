@@ -1,0 +1,111 @@
+rules_version = '2';
+
+// Planet · Calendario de capacitación — reglas de seguridad (se aplican en el servidor de Firebase)
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Identidad ----------
+    // Correo de la administradora inicial. Sólo se usa mientras no exista config/roles;
+    // después, las administradoras se administran desde la app (Configuración).
+    function bootstrapAdmin() { return 'jair@fpt.com.mx'; }
+
+    function signedIn() { return request.auth != null && request.auth.token.email != null && request.auth.token.email_verified == true; }
+    function email() { return request.auth.token.email.lower(); }
+    function rolesPath() { return /databases/$(database)/documents/config/roles; }
+    function roles() { return get(rolesPath()).data; }
+    function isAdmin() {
+      return signedIn() && (
+        (exists(rolesPath()) && email() in roles().admins) ||
+        (!exists(rolesPath()) && email() == bootstrapAdmin())
+      );
+    }
+    function regPath() { return /databases/$(database)/documents/regionales/$(email()); }
+    function isRegional() { return signedIn() && exists(regPath()) && get(regPath()).data.activo == true; }
+    function isReader() {
+      return signedIn() && exists(rolesPath()) &&
+        (email().split('@')[1] in roles().dominios || email() in roles().lectores);
+    }
+    function canRead() { return isAdmin() || isRegional() || isReader(); }
+
+    // ---------- Fechas (America/Mexico_City = UTC-6, sin horario de verano desde 2022) ----------
+    function hoyMX() { return (request.time - duration.value(6, 'h')).date(); }
+    function isDate(f) { return f is string && f.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
+    function ts(f) { return timestamp.date(int(f[0:4]), int(f[5:7]), int(f[8:10])); }
+    function mesActual(f) { return isDate(f) && int(f[0:4]) == hoyMX().year() && int(f[5:7]) == hoyMX().month(); }
+    function mesAnterior(f) { return isDate(f) && ts(f) < timestamp.date(hoyMX().year(), hoyMX().month(), 1); }
+    function bloqueado(f) {
+      let p = /databases/$(database)/documents/config/bloqueos;
+      return exists(p) && f in get(p).data.fechas;
+    }
+
+    // ---------- Validación de capacitaciones ----------
+    function estados() { return ['Por confirmar', 'Programada', 'Realizada', 'Reprogramada', 'Cancelada']; }
+    function validCap(d) {
+      return d.nombre is string && d.nombre.size() > 0 && d.nombre.size() <= 300
+        && d.publicos is list
+        && d.estado in estados()
+        && d.tipo in ['', 'Bootcamp', 'Online', 'En sitio']
+        && d.modalidad in ['', 'Presencial', 'Online']
+        && (d.tipo != 'Bootcamp' || (d.clubApertura is string && d.clubApertura.size() > 0) || d.origen == 'importacion')
+        && (d.fecha == '' || isDate(d.fecha));
+    }
+    // Fecha nueva: obligatoria y fuera de días bloqueados (las importaciones se conservan para revisión)
+    function fechaPermitida(d) { return d.origen == 'importacion' || (isDate(d.fecha) && !bloqueado(d.fecha)); }
+    function estadoInicialOk(d) { return d.estado in ['Por confirmar', 'Programada'] || mesActual(d.fecha) || d.origen == 'importacion'; }
+    function estadoCambioOk(antes, despues) {
+      return despues.estado == antes.estado
+        || mesActual(antes.fecha)
+        // cierre mensual automático: meses anteriores, nunca sobre canceladas
+        || (despues.estado == 'Realizada' && antes.estado != 'Cancelada' && mesAnterior(antes.fecha)
+            && despues.cierreAuto is map && despues.cierreAuto.mes == antes.fecha[0:7]);
+    }
+
+    match /capacitaciones/{id} {
+      allow read: if canRead();
+      allow create: if isAdmin() && validCap(request.resource.data) && fechaPermitida(request.resource.data) && estadoInicialOk(request.resource.data);
+      allow update: if isAdmin() && validCap(request.resource.data)
+        && (request.resource.data.fecha == resource.data.fecha || fechaPermitida(request.resource.data))
+        && estadoCambioOk(resource.data, request.resource.data);
+      allow delete: if false;
+    }
+
+    // Notas internas, historial y cierres: sólo administradora. El historial no se borra.
+    match /notas/{id} { allow read, write: if isAdmin(); }
+    match /historial/{id} { allow read, create, update: if isAdmin(); allow delete: if false; }
+    match /cierres/{mes} { allow read, write: if isAdmin(); }
+
+    // Configuración
+    match /config/roles {
+      allow read: if isAdmin();
+      allow write: if isAdmin() && request.resource.data.admins is list && request.resource.data.admins.size() > 0
+        && request.resource.data.dominios is list && request.resource.data.lectores is list;
+    }
+    match /config/publico { allow read: if canRead(); allow write: if isAdmin(); }
+    match /config/bloqueos { allow read: if canRead(); allow write: if isAdmin() && request.resource.data.fechas is list; }
+
+    // Regionales: documento por correo (en minúsculas) con sus regiones autorizadas
+    match /regionales/{correo} {
+      allow read: if isAdmin() || (signedIn() && correo == email());
+      allow write: if isAdmin() && request.resource.data.regiones is list && request.resource.data.activo is bool;
+    }
+
+    // Propuestas de Regionales: separadas del calendario oficial
+    match /propuestas/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.email == email());
+      allow create: if isRegional()
+        && request.resource.data.keys().hasOnly(['nombre', 'fecha', 'region', 'email', 'enviado', 'estado'])
+        && request.resource.data.email == email()
+        && request.resource.data.estado == 'Pendiente'
+        && request.resource.data.nombre is string && request.resource.data.nombre.size() > 0 && request.resource.data.nombre.size() <= 300
+        && request.resource.data.region in get(regPath()).data.regiones
+        && isDate(request.resource.data.fecha)
+        && ts(request.resource.data.fecha) >= hoyMX()
+        && !bloqueado(request.resource.data.fecha);
+      // Sólo la administradora decide; una propuesta decidida ya no cambia
+      allow update: if isAdmin() && resource.data.estado == 'Pendiente'
+        && request.resource.data.estado in ['Confirmada', 'Rechazada']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estado', 'decision', 'motivo', 'calId', 'decididoPor']);
+      allow delete: if false;
+    }
+  }
+}
