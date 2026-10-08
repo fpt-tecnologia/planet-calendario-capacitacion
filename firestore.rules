@@ -52,20 +52,13 @@ service cloud.firestore {
     // Fecha nueva: obligatoria y fuera de días bloqueados (las importaciones se conservan para revisión)
     function fechaPermitida(d) { return d.origen == 'importacion' || (isDate(d.fecha) && !bloqueado(d.fecha)); }
     function estadoInicialOk(d) { return d.estado in ['Por confirmar', 'Programada'] || mesActual(d.fecha) || d.origen == 'importacion'; }
-    function estadoCambioOk(antes, despues) {
-      return despues.estado == antes.estado
-        || mesActual(antes.fecha)
-        // cierre mensual automático: meses anteriores, nunca sobre canceladas
-        || (despues.estado == 'Realizada' && antes.estado != 'Cancelada' && mesAnterior(antes.fecha)
-            && despues.cierreAuto is map && despues.cierreAuto.mes == antes.fecha[0:7]);
-    }
 
     match /capacitaciones/{id} {
       allow read: if canRead();
       allow create: if isAdmin() && validCap(request.resource.data) && fechaPermitida(request.resource.data) && estadoInicialOk(request.resource.data);
       allow update: if isAdmin() && validCap(request.resource.data)
-        && (request.resource.data.fecha == resource.data.fecha || fechaPermitida(request.resource.data))
-        && estadoCambioOk(resource.data, request.resource.data);
+        // La administradora puede corregir el estado también en meses cerrados (la app lo registra en el historial)
+        && (request.resource.data.fecha == resource.data.fecha || fechaPermitida(request.resource.data));
       // Sólo la administradora elimina; la app deja constancia en el historial
       allow delete: if isAdmin();
     }
