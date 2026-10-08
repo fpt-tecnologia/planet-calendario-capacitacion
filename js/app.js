@@ -480,7 +480,7 @@ function showDetail(id) {
   const v = (x) => (x == null || x === '' || (Array.isArray(x) && !x.length) ? `<span class="pc">${fromProp ? 'Por confirmar' : 'Sin información'}</span>` : esc(Array.isArray(x) ? x.join(', ') : x));
   const canSt = PL.canChangeStatus(r.fecha, S.today);
   let h = `<div class="modal-h"><div><span class="lbl2">${esc(r.programa || r.tipo || 'Capacitación')}</span><h2>${esc(r.nombre)}</h2><div class="row" style="margin-top:6px">${tipoTag(r.tipo)}${stTag(r)}${areaTag(r.area)}${pubTags(r)}</div></div><button class="iconbtn" data-act="close" aria-label="Cerrar">×</button></div><div class="modal-b">`;
-  if (r.tipo === 'Bootcamp') h += `<div class="clubbanner"><small>Club que se aperturará</small>${esc(r.clubApertura || 'Por confirmar')}${r.numDia ? ` · Día ${esc(r.numDia)} de 6` : ''}</div>`;
+  if (r.tipo === 'Bootcamp') h += `<div class="clubbanner"><small>Club que se aperturará</small>${esc(r.clubApertura || 'Por confirmar')}${r.numDia ? ` · Día ${esc(r.numDia)}` : ''}</div>`;
   if (isAdmin() && (r.revision || []).length) h += `<div class="alert bad"><b>Marcada para revisión:</b><ul style="margin:4px 0 0 18px;padding:0">${r.revision.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
   if (r.cierreAuto && r.cierreAuto.mes) h += `<div class="alert warn">Marcada como “Realizada” por el cierre mensual automático de ${esc(r.cierreAuto.mes)} (${esc(fmtTS(r.cierreAuto.ts))}). No es una validación manual de ejecución.</div>`;
   const hol = PL.holidayInfo(r.fecha, extras());
@@ -504,9 +504,27 @@ function showDetail(id) {
       <div class="row" style="margin-top:8px">${PL.ESTADOS.map((e) => `<button class="btn sm" data-setstatus="${esc(e)}" data-id="${esc(r.id)}" ${!canSt || r.estado === e ? 'disabled' : ''}>${esc(e)}</button>`).join('')}</div></div>`;
   }
   h += '</div>';
-  if (isAdmin()) h += `<div class="modal-f"><button class="btn" data-act="close">Cerrar</button><button class="btn" data-dup="${esc(r.id)}">Duplicar capacitación</button><button class="btn primary" data-edit="${esc(r.id)}">Editar</button></div>`;
+  if (isAdmin()) h += `<div class="modal-f" id="detFoot"><button class="btn danger" data-del="${esc(r.id)}" style="margin-right:auto">Eliminar</button><button class="btn" data-act="close">Cerrar</button><button class="btn" data-dup="${esc(r.id)}">Duplicar capacitación</button><button class="btn primary" data-edit="${esc(r.id)}">Editar</button></div>`;
   else h += '<div class="modal-f"><button class="btn" data-act="close">Cerrar</button></div>';
   openModal(h);
+}
+
+/* ---------- Eliminar (sólo administradora) ---------- */
+function askDelete(id) {
+  const r = S.cal.get(id); const foot = $('#detFoot'); if (!r || !foot || !isAdmin()) return;
+  foot.innerHTML = `<div style="flex:1;color:var(--bad);font-weight:600">¿Eliminar “${esc(r.nombre)}” del ${PL.isDate(r.fecha) ? esc(fmtFecha(r.fecha)) : 'calendario'}? Se quita del calendario, de los indicadores y del dashboard. Queda registrado en el historial.</div><button class="btn" data-delno="${esc(id)}">No, conservar</button><button class="btn danger" data-delok="${esc(id)}">Sí, eliminar</button>`;
+  const b = foot.querySelector('[data-delok]'); if (b) b.focus();
+}
+async function doDelete(id, btn) {
+  if (!isAdmin()) return; const r = S.cal.get(id); if (!r) { closeModal(); return; }
+  btn.disabled = true; btn.textContent = 'Eliminando…';
+  const { id: _i, ...snap } = r;
+  try {
+    await retry(() => S.db.doc(P.cal + '/' + id).delete());
+    if (S.notas[id]) { try { await S.db.doc(P.notas + '/' + id).delete(); } catch (e) { console.warn('notas', e); } }
+    await addHist({ accion: 'Eliminación', capId: id, detalle: `${r.nombre} · ${r.fecha || 'sin fecha'}${r.horaInicio ? ' ' + horario(r) : ''} · ${r.estado}`, antes: snap, nota: S.notas[id] || '' });
+    closeModal(); toast(`Se eliminó “${r.nombre}”.`, 'ok');
+  } catch (e) { btn.disabled = false; btn.textContent = 'Sí, eliminar'; toast(dbErr(e), 'bad'); }
 }
 
 async function setStatus(id, estado, btn) {
@@ -966,6 +984,9 @@ document.addEventListener('click', async (e) => {
   if (d.open) return showDetail(d.open);
   if (d.edit) return openForm('edit', d.edit);
   if (d.dup) return openForm('dup', d.dup);
+  if (d.del) return askDelete(d.del);
+  if (d.delok) return doDelete(d.delok, t);
+  if (d.delno) return showDetail(d.delno);
   if (d.newdate) { const h = PL.holidayInfo(d.newdate, extras()); if (h) return toast(`No se puede programar el ${fmtFecha(d.newdate, true)}: ${h.motivo} es día de descanso obligatorio (${h.fuente}).`, 'bad'); return openForm('new', null, d.newdate); }
   if (d.day) { S.view = 'agenda'; render(); return; }
   if (d.selday) { S.selDay = d.selday; render(); return; }
