@@ -54,7 +54,7 @@ Abre la app, escribe el correo de la administradora y abre el enlace que llega. 
 
 ## Reglas de negocio implementadas en el servidor (`firestore.rules`)
 
-- Sólo la administradora escribe el calendario, notas, historial y configuración; el historial y el calendario no se pueden borrar.
+- Sólo la administradora escribe y elimina capacitaciones (botón “Eliminar” en el detalle, con confirmación y registro en el historial). El historial no se puede borrar.
 - Gerentes y Regionales no leen notas internas, historial, roles ni propuestas ajenas.
 - No se crean capacitaciones ni propuestas en días bloqueados (`config/bloqueos`, generado por la app con el art. 74 LFT y los descansos configurados). Las importaciones en feriado se conservan para revisión.
 - Bootcamp exige club que se aperturará.
