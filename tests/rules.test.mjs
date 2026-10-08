@@ -85,8 +85,11 @@ test('estado: sólo mes en curso; cierre automático en meses pasados', async ()
   await assertSucceeds(db.doc('capacitaciones/pasada').update({ estado: 'Realizada', cierreAuto: { mes: mesPasado.slice(0, 7), ts: 'x' } }));
   await assertFails(db.doc('capacitaciones/c1').update({ estado: 'Realizada', cierreAuto: { mes: mesSiguiente.slice(0, 7), ts: 'x' } }));
 });
-test('no se borra el calendario ni el historial', async () => {
-  await assertFails(as(ADMIN).doc('capacitaciones/c1').delete());
+test('sólo la administradora elimina del calendario; el historial no se borra', async () => {
+  await assertFails(as(GER).doc('capacitaciones/c1').delete());
+  await assertFails(as(REG).doc('capacitaciones/c1').delete());
+  await assertFails(as(EXT).doc('capacitaciones/c1').delete());
+  await assertSucceeds(as(ADMIN).doc('capacitaciones/c1').delete());
   await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc('historial/h1').set({ a: 1 }));
   await assertFails(as(ADMIN).doc('historial/h1').delete());
 });
