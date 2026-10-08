@@ -176,10 +176,10 @@
     if (d.horaInicio && a == null) errs.horaInicio = 'Hora no válida.';
     if (d.horaFin && b == null) errs.horaFin = 'Hora no válida.';
     if (a != null && b != null && b <= a) errs.horaFin = 'La hora de fin debe ser posterior a la de inicio.';
-    if (d.tipo === 'Bootcamp' && d.numDia !== '' && d.numDia != null && !(Number(d.numDia) >= 1 && Number(d.numDia) <= 6)) errs.numDia = 'En Bootcamp el día va de 1 a 6.';
+    if (d.tipo === 'Bootcamp' && d.numDia !== '' && d.numDia != null && !(Number(d.numDia) >= 1 && Number(d.numDia) <= 14)) errs.numDia = 'En Bootcamp el día va de 1 a 14.';
     if (!ESTADOS.includes(d.estado)) errs.estado = 'Elige un estado.';
     if (ctx.isNew && !['Por confirmar', 'Programada'].includes(d.estado) && !canChangeStatus(d.fecha, today)) errs.estado = 'Para fechas fuera del mes en curso, el estado inicial sólo puede ser “Por confirmar” o “Programada”.';
-    if (!ctx.isNew && ctx.estadoOriginal !== d.estado && !canChangeStatus(ctx.fechaOriginal, today)) errs.estado = 'Sólo se puede cambiar manualmente el estado de capacitaciones del mes en curso.';
+    // En meses cerrados la administradora puede corregir el estado; la app lo registra como corrección en el historial
     if (d.enlace && !/^https?:\/\//i.test(d.enlace)) errs.enlace = 'El enlace debe iniciar con https://';
     return errs;
   }
