@@ -77,13 +77,14 @@ test('administradora crea; no en feriado; bootcamp exige club', async () => {
   await assertSucceeds(db.doc('capacitaciones/n4').set(cap({ tipo: 'Bootcamp', modalidad: 'Presencial', clubApertura: 'Toluca' })));
   await assertSucceeds(db.doc('capacitaciones/n5').set(cap({ fecha: feriado, origen: 'importacion', revision: ['feriado'] })));
 });
-test('estado: sólo mes en curso; cierre automático en meses pasados', async () => {
+test('estado: la administradora corrige en cualquier mes; nadie más cambia estados', async () => {
   const db = as(ADMIN);
-  await assertFails(db.doc('capacitaciones/c1').update({ estado: 'Cancelada' }));
   await assertSucceeds(db.doc('capacitaciones/actual').update({ estado: 'Realizada' }));
-  await assertFails(db.doc('capacitaciones/pasada').update({ estado: 'Realizada' }));
+  await assertSucceeds(db.doc('capacitaciones/pasada').update({ estado: 'Cancelada' }));
   await assertSucceeds(db.doc('capacitaciones/pasada').update({ estado: 'Realizada', cierreAuto: { mes: mesPasado.slice(0, 7), ts: 'x' } }));
-  await assertFails(db.doc('capacitaciones/c1').update({ estado: 'Realizada', cierreAuto: { mes: mesSiguiente.slice(0, 7), ts: 'x' } }));
+  await assertFails(db.doc('capacitaciones/pasada').update({ estado: 'Inventado' }));
+  await assertFails(as(GER).doc('capacitaciones/pasada').update({ estado: 'Cancelada' }));
+  await assertFails(as(REG).doc('capacitaciones/pasada').update({ estado: 'Cancelada' }));
 });
 test('sólo la administradora elimina del calendario; el historial no se borra', async () => {
   await assertFails(as(GER).doc('capacitaciones/c1').delete());
