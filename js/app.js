@@ -500,8 +500,8 @@ function showDetail(id) {
     ${r.actualizado ? `<dt>Última modificación</dt><dd>${esc(fmtTS(r.actualizado))}</dd>` : ''}` : ''}
   </dl>`;
   if (isAdmin()) {
-    h += `<div class="panel" style="background:var(--surface)"><div class="row spread"><b>Cambiar estado</b>${canSt ? '' : '<span class="lock">Bloqueado: sólo se modifica el estado de capacitaciones del mes en curso.</span>'}</div>
-      <div class="row" style="margin-top:8px">${PL.ESTADOS.map((e) => `<button class="btn sm" data-setstatus="${esc(e)}" data-id="${esc(r.id)}" ${!canSt || r.estado === e ? 'disabled' : ''}>${esc(e)}</button>`).join('')}</div></div>`;
+    h += `<div class="panel" style="background:var(--surface)"><div class="row spread"><b>Cambiar estado</b>${canSt ? '' : '<span class="lock">Mes cerrado: como administradora puedes corregirlo; el cambio queda registrado en el historial como corrección.</span>'}</div>
+      <div class="row" style="margin-top:8px">${PL.ESTADOS.map((e) => `<button class="btn sm" data-setstatus="${esc(e)}" data-id="${esc(r.id)}" ${r.estado === e ? 'disabled' : ''}>${esc(e)}</button>`).join('')}</div></div>`;
   }
   h += '</div>';
   if (isAdmin()) h += `<div class="modal-f" id="detFoot"><button class="btn danger" data-del="${esc(r.id)}" style="margin-right:auto">Eliminar</button><button class="btn" data-act="close">Cerrar</button><button class="btn" data-dup="${esc(r.id)}">Duplicar capacitación</button><button class="btn primary" data-edit="${esc(r.id)}">Editar</button></div>`;
@@ -530,11 +530,11 @@ async function doDelete(id, btn) {
 async function setStatus(id, estado, btn) {
   if (!isAdmin()) return;
   const r = S.cal.get(id); if (!r) return;
-  if (!PL.canChangeStatus(r.fecha, PL.todayMX())) return toast('Sólo se puede cambiar el estado de capacitaciones del mes en curso.', 'bad');
+  const corr = !PL.canChangeStatus(r.fecha, PL.todayMX());
   const key = 'st' + id; if (S.busy.has(key)) return; S.busy.add(key); if (btn) btn.disabled = true;
   try {
     await retry(() => S.db.doc(P.cal + '/' + id).update({ estado, actualizado: nowISO(), cierreAuto: null }));
-    await addHist({ accion: 'Cambio de estado', calId: id, nombre: r.nombre, detalle: `“${r.estado}” → “${estado}” (validación manual)` });
+    await addHist({ accion: 'Cambio de estado', calId: id, nombre: r.nombre, detalle: `“${r.estado}” → “${estado}” (${corr ? 'corrección de administradora en mes cerrado' : 'validación manual'})` });
     toast(`Estado actualizado a “${estado}”.`, 'ok'); showDetail(id);
   } catch (e) { toast(dbErr(e), 'bad'); } finally { S.busy.delete(key); }
 }
@@ -552,7 +552,7 @@ function openForm(mode, id, fecha) {
   const d = base;
   const areas = [...new Set([...(S.pub.areas || []), d.area].filter(Boolean))].sort();
   const isNew = mode !== 'edit';
-  const canSt = isNew || PL.canChangeStatus(src.fecha, S.today);
+  const canSt = true; const mesCerrado = !isNew && !PL.canChangeStatus(src.fecha, S.today);
   const t = mode === 'edit' ? 'Editar capacitación' : mode === 'dup' ? 'Duplicar capacitación' : 'Nueva capacitación';
   const opt = (list, val, empty) => (empty ? `<option value="">${empty}</option>` : '') + list.map((o) => `<option ${o === val ? 'selected' : ''}>${esc(o)}</option>`).join('');
   const fld = (k, label, inner, cls) => `<div class="field ${cls || ''}" data-f="${k}"><label for="fm-${k}">${label}</label>${inner}<span class="err" id="err-${k}"></span></div>`;
@@ -580,7 +580,7 @@ function openForm(mode, id, fecha) {
       ${inp('horaFin', 'Hora de fin', 'time')}
       ${inp('numDia', 'Día o sesión del programa', 'number', 'min="1" max="99"')}
       ${inp('enlace', 'Enlace de conexión (online)', 'url', 'placeholder="https://"', 'wide')}
-      ${fld('estado', 'Estado', `<select id="fm-estado" ${canSt ? '' : 'disabled'}>${opt(isNew && !PL.canChangeStatus(d.fecha, S.today) ? ['Por confirmar', 'Programada'] : PL.ESTADOS, d.estado)}</select>${canSt ? (isNew ? '<span class="lock">Fuera del mes en curso sólo puedes iniciar en “Por confirmar” o “Programada”.</span>' : '') : '<span class="lock">Bloqueado: el estado sólo se modifica en capacitaciones del mes en curso.</span>'}`)}
+      ${fld('estado', 'Estado', `<select id="fm-estado" ${canSt ? '' : 'disabled'}>${opt(isNew && !PL.canChangeStatus(d.fecha, S.today) ? ['Por confirmar', 'Programada'] : PL.ESTADOS, d.estado)}</select>${canSt ? (isNew ? '<span class="lock">Fuera del mes en curso sólo puedes iniciar en “Por confirmar” o “Programada”.</span>' : mesCerrado ? '<span class="lock">Mes cerrado: el cambio de estado queda registrado como corrección de administradora.</span>' : '') : ''}`)}
       ${fld('notas', 'Notas internas (sólo administradora)', `<textarea id="fm-notas">${esc(FORM.nota)}</textarea>`, 'wide')}
       ${src && (src.revision || []).length && mode === 'edit' ? `<div class="field wide"><label class="chk"><input type="checkbox" id="fm-revisado"> Ya revisé: quitar la marca de revisión (${src.revision.length})</label></div>` : ''}
     </div>
@@ -640,7 +640,7 @@ async function saveForm() {
     await retry(() => S.db.doc(P.cal + '/' + id).set(rec));
     if ((nota || '') !== (FORM.nota || '') || (FORM.mode === 'dup' && nota)) await retry(() => S.db.doc(P.notas + '/' + id).set({ texto: nota }));
     let detalle = '';
-    if (!isNew) { const ch = FIELDS.filter((k) => JSON.stringify(src[k] ?? '') !== JSON.stringify(rec[k] ?? '')); detalle = ch.length ? 'Campos: ' + ch.join(', ') : 'Sin cambios en campos'; if (src.estado !== rec.estado) detalle += ` · estado “${src.estado}” → “${rec.estado}”`; }
+    if (!isNew) { const ch = FIELDS.filter((k) => JSON.stringify(src[k] ?? '') !== JSON.stringify(rec[k] ?? '')); detalle = ch.length ? 'Campos: ' + ch.join(', ') : 'Sin cambios en campos'; if (src.estado !== rec.estado) detalle += ` · estado “${src.estado}” → “${rec.estado}”${PL.canChangeStatus(src.fecha, S.today) ? '' : ' (corrección de administradora en mes cerrado)'}`; }
     await addHist({ accion: FORM.mode === 'dup' ? 'Duplicada' : isNew ? 'Creada' : 'Editada', calId: id, nombre: rec.nombre, detalle: FORM.mode === 'dup' ? `Copia de ${src.nombre} (${src.fecha || 'sin fecha'}) para el ${rec.fecha}` : detalle });
     toast(FORM.mode === 'dup' ? 'Copia guardada como capacitación nueva.' : isNew ? 'Capacitación guardada en el calendario.' : 'Cambios guardados.', 'ok');
     closeModal(); FORM = null;
