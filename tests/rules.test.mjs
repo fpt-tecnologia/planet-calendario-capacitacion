@@ -98,6 +98,8 @@ test('regional propone sólo en sus regiones, desde hoy y fuera de feriados', as
   const db = as(REG);
   const p = (o) => ({ nombre: 'Taller', fecha: futuro, region: 'R2', email: REG, enviado: 'x', estado: 'Pendiente', ...o });
   await assertSucceeds(db.doc('propuestas/a').set(p()));
+  await assertSucceeds(db.doc('propuestas/h').set(p({ horaInicio: '15:00', horaFin: '16:30' })));
+  await assertFails(db.doc('propuestas/h2').set(p({ horaInicio: '25:00' })));
   await assertFails(db.doc('propuestas/b').set(p({ region: 'R3' })));
   await assertFails(db.doc('propuestas/c').set(p({ fecha: mx(-2) })));
   await assertFails(db.doc('propuestas/d').set(p({ fecha: feriado })));
