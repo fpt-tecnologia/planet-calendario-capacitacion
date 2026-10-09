@@ -46,7 +46,10 @@ test('validación: feriado, bootcamp sin club, estado fuera de mes', () => {
 });
 test('propuesta: región autorizada y fecha desde hoy', () => {
   const ctx = { today: '2026-10-06', extras: [], regiones: ['R2'] };
-  assert.deepEqual(PL.validateProposal({ nombre: 'x', fecha: '2026-10-07', region: 'R2' }, ctx), {});
+  assert.deepEqual(PL.validateProposal({ nombre: 'x', fecha: '2026-10-07', horaInicio: '15:00', horaFin: '16:30', region: 'R2' }, ctx), {});
+  assert.ok(PL.validateProposal({ nombre: 'x', fecha: '2026-10-07', region: 'R2' }, ctx).horaInicio);
+  assert.ok(PL.validateProposal({ nombre: 'x', fecha: '2026-10-07', horaInicio: '16:00', horaFin: '15:00', region: 'R2' }, ctx).horaFin);
+  assert.deepEqual(PL.validateProposal({ nombre: 'x', fecha: '2026-10-07', region: 'R2' }, { ...ctx, legacy: true }), {});
   assert.ok(PL.validateProposal({ nombre: 'x', fecha: '2026-10-05', region: 'R2' }, ctx).fecha);
   assert.ok(PL.validateProposal({ nombre: 'x', fecha: '2026-10-07', region: 'R1' }, ctx).region);
 });
