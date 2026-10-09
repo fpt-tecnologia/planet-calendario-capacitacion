@@ -191,6 +191,13 @@
     else if (p.fecha < ctx.today) errs.fecha = 'La fecha propuesta debe ser a partir de hoy.';
     else { const h = holidayInfo(p.fecha, ctx.extras); if (h) errs.fecha = `El ${p.fecha} es día de descanso obligatorio (${h.motivo}). Elige otra fecha.`; }
     if (!(ctx.regiones || []).includes(p.region)) errs.region = 'Elige una de tus regiones autorizadas.';
+    // Horario: obligatorio en propuestas nuevas; las anteriores (sin horario) se siguen aceptando
+    if (!ctx.legacy || p.horaInicio != null) {
+      const a = toMin(p.horaInicio), b = toMin(p.horaFin);
+      if (a == null) errs.horaInicio = 'Elige la hora de inicio.';
+      if (p.horaFin && b == null) errs.horaFin = 'Hora no válida.';
+      else if (a != null && b != null && b <= a) errs.horaFin = 'La hora de fin debe ser posterior a la de inicio.';
+    }
     return errs;
   }
 
