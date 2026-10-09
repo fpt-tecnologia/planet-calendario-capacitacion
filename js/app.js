@@ -790,6 +790,7 @@ function renderCfgTab() {
       <li><b>Regionales:</b> regístralos abajo con su correo y regiones. Su enlace de ingreso es <code>${esc(location.href.split('#')[0])}#regional</code>.</li>
       <li>Todas las personas entran con un enlace de acceso que llega a su correo; compartir la dirección de la app no da permisos por sí sola.</li>
     </ol></section>`;
+  h += renderPeople();
   h += `<section class="panel"><div class="sec-title"><h2>Acceso de Gerentes</h2></div>
     <div class="grid2"><div><h3 style="font-size:18px">Dominios autorizados</h3><p class="muted" style="font-size:13px">Cualquier correo verificado de estos dominios puede consultar el calendario.</p>
       <div class="list">${chipList(S.roles.dominios, 'data-deldom', 'Sin dominios autorizados.')}</div>
@@ -853,6 +854,72 @@ async function regToggle(id, activo) {
   try { await retry(() => S.db.doc(P.regs + '/' + id).update({ activo })); await addHist({ accion: activo ? 'Regional habilitado' : 'Acceso de Regional retirado', detalle: id }); toast(activo ? 'Acceso habilitado.' : 'Acceso retirado. Sus propuestas anteriores se conservan.', 'ok'); }
   catch (e) { toast(dbErr(e), 'bad'); }
 }
+/* ---------- Personas y roles ---------- */
+const ROLES_UI = { admin: 'Administradora', gerente: 'Gerente (consulta)', regional: 'Regional', sinacceso: 'Sin acceso' };
+function domainOk(email) { return S.roles.dominios.includes(email.split('@')[1] || ''); }
+function personRole(email) {
+  if (S.roles.admins.includes(email)) return 'admin';
+  const r = S.regs.find((x) => x.id === email); if (r && r.activo) return 'regional';
+  if (S.roles.lectores.includes(email) || domainOk(email)) return 'gerente';
+  return 'sinacceso';
+}
+function people() {
+  const set = new Set([...S.roles.admins, ...S.roles.lectores, ...S.regs.map((r) => r.id)]);
+  return [...set].sort((a, b) => a.localeCompare(b)).map((email) => {
+    const role = personRole(email); const reg = S.regs.find((x) => x.id === email);
+    const por = role === 'gerente' && !S.roles.lectores.includes(email) ? 'por dominio' : '';
+    return { email, role, regiones: reg && reg.activo ? reg.regiones || [] : [], por };
+  });
+}
+function renderPeople() {
+  const rows = people();
+  return `<section class="panel"><div class="sec-title"><h2>Personas y roles</h2><button class="btn primary" data-rolechg="">+ Asignar rol a un correo</button></div>
+    <p class="muted">Cambia el rol de cualquier persona registrada. Cada cambio queda en el historial y aplica la próxima vez que la persona abra o recargue la app.</p>
+    <div class="tablewrap"><table><thead><tr><th>Correo</th><th>Rol actual</th><th>Regiones</th><th></th></tr></thead><tbody>
+    ${rows.length ? rows.map((r) => `<tr><td>${esc(r.email)}${r.email === S.email ? ' <span class="muted">(tú)</span>' : ''}</td><td><span class="tag ${r.role === 'admin' ? 'pub' : 'mod'}">${esc(ROLES_UI[r.role])}</span>${r.por ? ` <span class="muted" style="font-size:12px">${r.por}</span>` : ''}</td><td>${r.regiones.map((x) => `<span class="tag pub">${esc(x)}</span>`).join('') || '<span class="muted">—</span>'}</td><td style="text-align:right"><button class="btn sm" data-rolechg="${esc(r.email)}">Cambiar rol</button></td></tr>`).join('') : '<tr><td colspan="4" class="muted">Sin personas registradas.</td></tr>'}
+    </tbody></table></div></section>`;
+}
+function roleEdit(email) {
+  const cur = email ? personRole(email) : 'gerente'; const reg = S.regs.find((x) => x.id === email);
+  const regs = reg ? reg.regiones || [] : [];
+  openModal(`<div class="modal-h"><h2>${email ? 'Cambiar rol' : 'Asignar rol'}</h2><button class="iconbtn" data-act="close" aria-label="Cerrar">×</button></div><div class="modal-b">
+    ${email ? `<p><b>${esc(email)}</b> · rol actual: ${esc(ROLES_UI[cur])}</p>` : `<div class="field"><label for="ro-email">Correo</label><input id="ro-email" type="email" placeholder="nombre@empresa.com"></div>`}
+    <div class="field"><span class="lbl2">Nuevo rol</span><div class="checks" id="ro-role" style="flex-direction:column;align-items:flex-start">
+      ${Object.entries(ROLES_UI).map(([k, v]) => `<label class="chk"><input type="radio" name="ro-role" value="${k}" ${k === cur ? 'checked' : ''}>${esc(v)}<span class="muted" style="font-size:12px;margin-left:6px">${{ admin: 'Todo: crear, editar, eliminar, configurar', gerente: 'Sólo consulta el calendario', regional: 'Propone capacitaciones en sus regiones', sinacceso: 'Sin permisos' }[k]}</span></label>`).join('')}
+    </div></div>
+    <div class="field" id="ro-regbox" style="${cur === 'regional' ? '' : 'display:none'}"><span class="lbl2">Regiones autorizadas</span><div class="checks" id="ro-regs">${PL.REGIONES.map((x) => `<label class="chk"><input type="checkbox" value="${x}" ${regs.includes(x) ? 'checked' : ''}>${x}</label>`).join('')}</div></div>
+    <div id="ro-msg"></div></div>
+    <div class="modal-f"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" data-rolesave="${esc(email || '')}">Guardar</button></div>`, 'sm');
+  document.querySelectorAll('input[name="ro-role"]').forEach((i) => i.addEventListener('change', () => { $('#ro-regbox').style.display = $('input[name="ro-role"]:checked').value === 'regional' ? '' : 'none'; }));
+}
+async function roleSave(emailArg, btn) {
+  const email = (emailArg || ($('#ro-email') ? $('#ro-email').value : '')).trim().toLowerCase();
+  const msg = (t) => { $('#ro-msg').innerHTML = `<div class="alert bad">${esc(t)}</div>`; };
+  if (!EMAIL_RE.test(email)) return msg('Escribe un correo válido.');
+  const sel = $('input[name="ro-role"]:checked'); if (!sel) return msg('Elige un rol.');
+  const nuevo = sel.value; const prev = personRole(email);
+  const regiones = [...document.querySelectorAll('#ro-regs input:checked')].map((x) => x.value);
+  if (nuevo === 'regional' && !regiones.length) return msg('Marca al menos una región para el Regional.');
+  if (email === S.email && nuevo !== 'admin') return msg('No puedes quitarte tu propio rol de administradora. Pide a otra administradora que lo haga.');
+  const admins = S.roles.admins.filter((x) => x !== email); if (nuevo === 'admin') admins.push(email);
+  if (!admins.length) return msg('Debe quedar al menos una administradora.');
+  const lectores = S.roles.lectores.filter((x) => x !== email); if (nuevo === 'gerente') lectores.push(email);
+  const reg = S.regs.find((x) => x.id === email);
+  btn.disabled = true;
+  try {
+    const b = S.db.batch();
+    b.set(S.db.doc(P.roles), { ...S.roles, admins, lectores });
+    if (nuevo === 'regional') b.set(S.db.doc(P.regs + '/' + email), { regiones, activo: true, alta: (reg && reg.alta) || nowISO() });
+    else if (reg && reg.activo) b.update(S.db.doc(P.regs + '/' + email), { activo: false });
+    await retry(() => b.commit());
+    S.roles = { ...S.roles, admins, lectores };
+    await addHist({ accion: 'Cambio de rol', detalle: `${email}: ${ROLES_UI[prev]} → ${ROLES_UI[nuevo]}${nuevo === 'regional' ? ' (' + regiones.join(', ') + ')' : ''}` });
+    closeModal();
+    const aviso = nuevo === 'sinacceso' && domainOk(email) ? ` Ojo: su dominio está autorizado, así que seguirá entrando como Gerente (consulta) mientras el dominio esté en la lista.` : '';
+    toast(`Rol de ${email}: ${ROLES_UI[nuevo]}.${aviso}`, aviso ? 'bad' : 'ok'); render();
+  } catch (e) { btn.disabled = false; msg(dbErr(e)); }
+}
+
 function regEdit(id) {
   const r = S.regs.find((x) => x.id === id); if (!r) return;
   openModal(`<div class="modal-h"><h2>Regiones autorizadas</h2><button class="iconbtn" data-act="close" aria-label="Cerrar">×</button></div><div class="modal-b"><p>${esc(id)}</p><div class="checks" id="re-regs">${PL.REGIONES.map((x) => `<label class="chk"><input type="checkbox" value="${x}" ${(r.regiones || []).includes(x) ? 'checked' : ''}>${x}</label>`).join('')}</div></div><div class="modal-f"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" data-regsave="${esc(id)}">Guardar</button></div>`, 'sm');
@@ -1002,6 +1069,8 @@ document.addEventListener('click', async (e) => {
   if (d.regoff) return regToggle(d.regoff, false);
   if (d.regon) return regToggle(d.regon, true);
   if (d.regedit) return regEdit(d.regedit);
+  if (d.rolechg !== undefined) return roleEdit(d.rolechg);
+  if (d.rolesave !== undefined) return roleSave(d.rolesave, t);
   if (d.regsave) return regSave(d.regsave, t);
   if (d.deldesc) { try { await savePub({ descansos: extras().filter((x) => x.fecha !== d.deldesc) }); await addHist({ accion: 'Descanso adicional quitado', detalle: d.deldesc }); toast('Fecha desbloqueada.', 'ok'); } catch (er) { toast(dbErr(er), 'bad'); } return; }
   if (d.delarea) { try { await savePub({ areas: (S.pub.areas || []).filter((x) => x !== d.delarea) }); await addHist({ accion: 'Catálogo de áreas', detalle: `Baja: ${d.delarea}` }); } catch (er) { toast(dbErr(er), 'bad'); } return; }
