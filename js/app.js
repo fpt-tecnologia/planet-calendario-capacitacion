@@ -132,11 +132,25 @@ async function detectRole() {
   if (location.hash === '#regional' && S.role === 'gerente') S.roleNote = 'Esta cuenta no está habilitada como Regional. Pide a la coordinación de capacitación que registre tu correo y tus regiones.';
 }
 
+/* Vuelve a calcular el rol sin recargar (cambios de rol hechos por una administradora) */
+async function refreshRole() {
+  if (refreshRole.busy || !S.email) return; refreshRole.busy = true;
+  const prev = S.role, tab = S.tab;
+  try {
+    S.unsubs.forEach((f) => f()); S.unsubs = []; detectRole.retried = false;
+    await detectRole(); subscribe();
+    if (prev !== S.role) { closeModal(); FORM = null; S.roleNote = `Tu acceso cambió: ahora entras como ${{ admin: 'administradora', regional: 'Regional', gerente: 'Gerente (consulta)', sinacceso: 'persona sin acceso' }[S.role] || S.role}.`; }
+    else S.tab = tab;
+  } finally { refreshRole.busy = false; render(); }
+}
+let lastRoleCheck = Date.now();
+window.addEventListener('focus', () => { if (S.email && Date.now() - lastRoleCheck > 60000) { lastRoleCheck = Date.now(); refreshRole(); } });
+
 function onSubErr(e, label) {
   console.warn('Firestore', label, e);
   if (!e || e.code !== 'permission-denied') return;
   // Una lectura rechazada no quita el rol de administradora: se informa y se sigue
-  if (S.role === 'admin') { toast(`El servidor rechazó la lectura de “${label}”: ${e.message}`, 'bad'); return; }
+  if (S.role === 'admin') { refreshRole(); return; }
   S.diag = label + ': ' + e.code; S.role = 'sinacceso'; render();
 }
 function sub(ref, fn) { const label = ref.path || (ref._query && ref._query.path && ref._query.path.toString()) || 'datos'; S.unsubs.push(ref.onSnapshot(fn, (e) => onSubErr(e, label))); }
@@ -151,7 +165,7 @@ function subscribe() {
     render();
   });
   if (isAdminRole()) {
-    sub(S.db.doc(P.roles), (s) => { if (s.exists) { const d = s.data(); S.roles = { admins: d.admins || [], dominios: d.dominios || [], lectores: d.lectores || [] }; } render(); });
+    sub(S.db.doc(P.roles), (s) => { if (s.exists) { const d = s.data(); S.roles = { admins: d.admins || [], dominios: d.dominios || [], lectores: d.lectores || [] }; if (!S.roles.admins.includes(S.email)) return refreshRole(); } render(); });
     sub(S.db.collection(P.notas), (snap) => { S.notas = Object.fromEntries(snap.docs.map((d) => [d.id, d.data().texto || ''])); render(); });
     sub(S.db.collection(P.hist).orderBy('ts', 'desc').limit(500), (snap) => { S.hist = snap.docs.map((d) => ({ id: d.id, ...d.data() })); render(); });
     sub(S.db.collection(P.regs), (snap) => { S.regs = snap.docs.map((d) => ({ id: d.id, ...d.data() })); render(); });
@@ -677,7 +691,7 @@ function renderPropTab() {
   if (!S.regs.length && !list.length) h += '<div class="empty"><b>Aún no hay Regionales habilitados</b>Regístralos en Configuración → Accesos de Regionales.</div>';
   else if (!shown.length) h += `<div class="empty"><b>Sin propuestas ${f === 'Todas' ? '' : f.toLowerCase() + 's'}</b>Cuando un Regional envíe una propuesta aparecerá aquí.</div>`;
   else {
-    h += `<div class="tablewrap"><table><thead><tr><th>Capacitación</th><th>Fecha propuesta</th><th>Región</th><th>Regional</th><th>Enviada</th><th>Estado</th><th></th></tr></thead><tbody>`;
+    h += `<div class="tablewrap"><table><thead><tr><th>Capacitación</th><th>Fecha propuesta</th><th>Horario</th><th>Región</th><th>Regional</th><th>Enviada</th><th>Estado</th><th></th></tr></thead><tbody>`;
     shown.forEach((p) => {
       const e = p.estado; const reg = regOf(p.email);
       const warn = [];
@@ -686,7 +700,7 @@ function renderPropTab() {
       if (PL.holidayInfo(p.fecha, extras())) warn.push('Fecha en día de descanso obligatorio');
       if (e === 'Pendiente' && p.fecha < S.today) warn.push('La fecha propuesta ya pasó');
       const cls = e === 'Confirmada' ? 'Realizada' : e === 'Rechazada' ? 'Cancelada' : 'Por';
-      h += `<tr><td><b>${esc(p.nombre)}</b>${warn.length && e === 'Pendiente' ? `<div class="rev" style="display:inline-block;margin-top:4px">${esc(warn.join(' · '))}</div>` : ''}</td><td class="tabnum">${esc(fmtFecha(p.fecha))}</td><td><span class="tag pub">${esc(p.region)}</span></td><td>${esc(p.email)}</td><td class="tabnum">${esc(fmtTS(p.enviado))}</td>
+      h += `<tr><td><b>${esc(p.nombre)}</b>${warn.length && e === 'Pendiente' ? `<div class="rev" style="display:inline-block;margin-top:4px">${esc(warn.join(' · '))}</div>` : ''}</td><td class="tabnum">${esc(fmtFecha(p.fecha))}</td><td class="tabnum">${p.horaInicio ? esc(horario(p)) : '<span class="muted">—</span>'}</td><td><span class="tag pub">${esc(p.region)}</span></td><td>${esc(p.email)}</td><td class="tabnum">${esc(fmtTS(p.enviado))}</td>
         <td><span class="st st-${cls}">${esc(e)}</span>${p.decision ? `<div class="muted" style="font-size:12px">${esc(fmtTS(p.decision))}</div>` : ''}${p.motivo ? `<div class="muted" style="font-size:12px">${esc(p.motivo)}</div>` : ''}</td>
         <td>${e === 'Pendiente' ? `<div class="row" style="flex-wrap:nowrap"><button class="btn sm ok" data-confirm="${esc(p.id)}" ${warn.length ? 'disabled title="Corrige o rechaza: ' + esc(warn.join(', ')) + '"' : ''}>Confirmar</button><button class="btn sm danger" data-reject="${esc(p.id)}">Rechazar</button></div>` : e === 'Confirmada' && p.calId && S.cal.has(p.calId) ? `<button class="btn sm" data-open="${esc(p.calId)}">Ver en calendario</button>` : ''}</td></tr>`;
     });
@@ -705,10 +719,10 @@ async function confirmProp(pid, btn) {
       const p = ps.data();
       if (p.estado !== 'Pendiente') return { ya: p.estado };
       const rs = await tx.get(S.db.doc(P.regs + '/' + p.email)); const reg = rs.exists ? rs.data() : null;
-      const errs = PL.validateProposal(p, { today: S.today, extras: extras(), regiones: reg && reg.activo ? reg.regiones : [] });
+      const errs = PL.validateProposal(p, { today: S.today, extras: extras(), regiones: reg && reg.activo ? reg.regiones : [], legacy: true });
       if (Object.keys(errs).length) throw { msg: 'No se puede confirmar: ' + Object.values(errs).join(' ') };
       const cref = S.db.doc(P.cal + '/' + calId); const cs = await tx.get(cref);
-      if (!cs.exists) tx.set(cref, { nombre: p.nombre, fecha: p.fecha, publicos: [p.region], estado: 'Por confirmar', programa: '', tema: '', tipo: '', modalidad: '', area: '', facilitador: '', perfil: '', clubApertura: '', clubes: '', ciudad: '', sede: '', horaInicio: '', horaFin: '', numDia: '', enlace: '', origen: 'propuesta', propuesta: { id: pid, email: p.email, enviado: p.enviado || '', region: p.region }, revision: [], cierreAuto: null, creado: nowISO(), actualizado: nowISO() });
+      if (!cs.exists) tx.set(cref, { nombre: p.nombre, fecha: p.fecha, publicos: [p.region], estado: 'Por confirmar', programa: '', tema: '', tipo: '', modalidad: '', area: '', facilitador: '', perfil: '', clubApertura: '', clubes: '', ciudad: '', sede: '', horaInicio: p.horaInicio || '', horaFin: p.horaFin || '', numDia: '', enlace: '', origen: 'propuesta', propuesta: { id: pid, email: p.email, enviado: p.enviado || '', region: p.region }, revision: [], cierreAuto: null, creado: nowISO(), actualizado: nowISO() });
       tx.update(pref, { estado: 'Confirmada', decision: nowISO(), calId, decididoPor: S.email });
       return { p };
     });
@@ -743,21 +757,23 @@ function renderRegTab() {
     <form id="pform" class="fgrid" novalidate>
       <div class="field wide" data-f="p-nombre"><label for="p-nombre">Nombre de la capacitación *</label><input id="p-nombre" maxlength="160" required><span class="err" id="err-p-nombre"></span></div>
       <div class="field" data-f="p-fecha"><label for="p-fecha">Día propuesto *</label><input id="p-fecha" type="date" min="${S.today}" required><span class="err" id="err-p-fecha"></span></div>
+      <div class="field" data-f="p-horaInicio"><label for="p-horaInicio">Hora de inicio *</label><input id="p-horaInicio" type="time" required><span class="err" id="err-p-horaInicio"></span></div>
+      <div class="field" data-f="p-horaFin"><label for="p-horaFin">Hora de fin</label><input id="p-horaFin" type="time"><span class="err" id="err-p-horaFin"></span></div>
       <div class="field" data-f="p-region"><label for="p-region">Región *</label><select id="p-region">${regs.length > 1 ? '<option value="">Elige una región</option>' : ''}${regs.map((r) => `<option>${esc(r)}</option>`).join('')}</select><span class="err" id="err-p-region"></span></div>
       <div class="field wide"><button class="btn primary" id="btnProp" type="submit" ${regs.length ? '' : 'disabled'}>Enviar propuesta</button></div>
     </form>${regs.length ? `<p class="muted" style="font-size:13px">Regiones autorizadas: ${regs.map((r) => `<span class="tag pub">${esc(r)}</span>`).join(' ')}</p>` : '<div class="alert warn">No tienes regiones autorizadas. Pide a la coordinación que te las asigne.</div>'}</section>`;
   const mine = [...S.myProps].sort((a, b) => (b.enviado || '').localeCompare(a.enviado || ''));
   h += `<section class="panel"><div class="sec-title"><h2>Mis propuestas</h2></div>`;
   if (!mine.length) h += '<div class="empty"><b>Aún no has enviado propuestas</b>Usa el formulario de arriba para proponer una fecha.</div>';
-  else h += `<div class="tablewrap"><table><thead><tr><th>Capacitación</th><th>Fecha propuesta</th><th>Región</th><th>Enviada</th><th>Estado</th></tr></thead><tbody>${mine.map((p) => { const e = p.estado || 'Pendiente'; return `<tr><td>${esc(p.nombre)}</td><td class="tabnum">${esc(fmtFecha(p.fecha))}</td><td><span class="tag pub">${esc(p.region)}</span></td><td class="tabnum">${esc(fmtTS(p.enviado))}</td><td><span class="st st-${e === 'Confirmada' ? 'Realizada' : e === 'Rechazada' ? 'Cancelada' : 'Por'}">${esc(e)}</span>${p.motivo ? `<div class="muted" style="font-size:12px">${esc(p.motivo)}</div>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`;
+  else h += `<div class="tablewrap"><table><thead><tr><th>Capacitación</th><th>Fecha propuesta</th><th>Horario</th><th>Región</th><th>Enviada</th><th>Estado</th></tr></thead><tbody>${mine.map((p) => { const e = p.estado || 'Pendiente'; return `<tr><td>${esc(p.nombre)}</td><td class="tabnum">${esc(fmtFecha(p.fecha))}</td><td class="tabnum">${p.horaInicio ? esc(horario(p)) : '—'}</td><td><span class="tag pub">${esc(p.region)}</span></td><td class="tabnum">${esc(fmtTS(p.enviado))}</td><td><span class="st st-${e === 'Confirmada' ? 'Realizada' : e === 'Rechazada' ? 'Cancelada' : 'Por'}">${esc(e)}</span>${p.motivo ? `<div class="muted" style="font-size:12px">${esc(p.motivo)}</div>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`;
   return h + '</section>';
 }
 async function sendProposal() {
   const btn = $('#btnProp'); if (!btn || btn.disabled) return;
-  const p = { nombre: $('#p-nombre').value.trim(), fecha: $('#p-fecha').value, region: $('#p-region').value };
+  const p = { nombre: $('#p-nombre').value.trim(), fecha: $('#p-fecha').value, horaInicio: $('#p-horaInicio').value, horaFin: $('#p-horaFin').value, region: $('#p-region').value };
   S.today = PL.todayMX();
   const errs = PL.validateProposal(p, { today: S.today, extras: extras(), regiones: (S.myAuth && S.myAuth.regiones) || [] });
-  ['nombre', 'fecha', 'region'].forEach((k) => { $('#err-p-' + k).textContent = errs[k] || ''; $(`[data-f="p-${k}"]`).classList.toggle('invalid', !!errs[k]); });
+  ['nombre', 'fecha', 'horaInicio', 'horaFin', 'region'].forEach((k) => { $('#err-p-' + k).textContent = errs[k] || ''; $(`[data-f="p-${k}"]`).classList.toggle('invalid', !!errs[k]); });
   if (Object.keys(errs).length) return;
   btn.disabled = true; btn.textContent = 'Enviando…';
   try {
