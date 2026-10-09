@@ -87,7 +87,9 @@ service cloud.firestore {
     match /propuestas/{id} {
       allow read: if isAdmin() || (signedIn() && resource.data.email == email());
       allow create: if isRegional()
-        && request.resource.data.keys().hasOnly(['nombre', 'fecha', 'region', 'email', 'enviado', 'estado'])
+        && request.resource.data.keys().hasOnly(['nombre', 'fecha', 'horaInicio', 'horaFin', 'region', 'email', 'enviado', 'estado'])
+        && (!('horaInicio' in request.resource.data) || request.resource.data.horaInicio.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$'))
+        && (!('horaFin' in request.resource.data) || request.resource.data.horaFin == '' || request.resource.data.horaFin.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$'))
         && request.resource.data.email == email()
         && request.resource.data.estado == 'Pendiente'
         && request.resource.data.nombre is string && request.resource.data.nombre.size() > 0 && request.resource.data.nombre.size() <= 300
